@@ -88,4 +88,68 @@
 2. 利用Spark集群计算候选对比序列模式的对比度
 3. Spark架构下的候选模式剪枝策略
 
-ssss
+######算法流程图
+![SP-kDSP-Miner算法流程图](/Users/fang/Documents/github-file/Spark_Top-k_Note/Flow chart of SP-kDSP-Miner.jpg)
+
+####候选对比序列模式生成
+设计使用于Spark架构的集合枚举树遍历方式和剪枝策略是算法执行效率的基础
+
+> 引理1：  若Sup(P,D+)<=σ(σ>0) , 则CR(P,D+,D-)<=σ
+
+> 定理1：  若Sup(P,D+)=0 , 则P不是对比序列
+
+> ==>剪枝策略1： 若Sup(P,D+)=0，那么剪去集合枚举树中P的所有子节点
+
+> 定理2： P'是P的连续子序列，若Sup(P',D+)<σ，则P的正例支持度Sup(P,D+)<=Sup(P',D+)<σ
+
+> ==>剪枝策略2： 令R为当前对比度最大的k个对比序列模式集合，CRmin = min{CR(P'',D+,D-)|P''∈R}。若Sup(P,D+)<CRmin，那么剪去集合枚举树中P的所有子节点
+
+######Spark并行计算的开销
+1次作业的开销主要包括：作业调度开销、作业通信开销、作业计算开销。所以我们应该尽可能产生相互不影响（没有剪枝关系）的候选对比序列模式，进而在1次Spark作业中可以并行处理多个候选模式，充分利用Spark集群的计算能力，提高计算效率
+
+######广度优先遍历策略
+
+> 目的: 在生成长度为l的候选对比序列模式之前会先生成所有长度小于l的候选模式
+
+> 注意： 长度相等的候选模式，它们之间不存在子序列关系，因此不会出现相互剪枝的情况，而1次Spark作业中可以并行处理所有长度为l的候选对比序列模式。
+
+######基于广度优先遍历集合枚举树策略，设计候选模式生成方法
+给定个候选对比序列模式P,Q(|P|=|Q|=l)，如果pre(P)=suf(Q),则有P,Q可生成第l+1层的对比候选序列模式，表示为P⊕Q = Q[1]P[1]P[2]...P[l]=Q[1]Q[2]...Q[l]P[l]
+
+![集合枚举树示例](/Users/fang/Documents/github-file/Spark_Top-k_Note/An example of a set enumeration tree.jpg)
+
+> SP-kDSP-Miner生成候选模式算法的伪代码
+
+> 算法1. GENERATE(C[l])算法
+
+> 输入：长度为l的候选对比序列模式的集合C[l]、当前对比度最大的k个对比序列模式中最小的对比度CRmin
+
+> 输出：长度为l+1的候选对比序列模式集合C[l+1]
+![SP-kDSP-Miner生成候选模式算法的伪代码](/Users/fang/Documents/github-file/Spark_Top-k_Note/SP-kDSP-Miner code.jpg)
+
+####对比度并行计算
+
+![Contrast calculation process in SP-kDSP-Miner](/Users/fang/Documents/github-file/Spark_Top-k_Note/Contrast calculation process in SP-kDSP-Miner.jpg)
+![Contrast calculation process](/Users/fang/Documents/github-file/Spark_Top-k_Note/Contrast calculation process.jpg)
+
+
+> 剪枝策略3：在对比度计算过程中，对于候选模式P，若Sup(P,D+)<CRmin，则把模式P从C[l]中移除--令C[l]是长度为l的候选对比序列模式集合
+
+######剪枝策略3与剪枝策略2不同点
+虽然两者都基于定理2，但它们的执行时间与剪枝对象不同
+
+- 剪枝策略3在对比度计算过程中生效，即在剪枝跳槽(CRmin)变化前执行。这是因为计算对比度时使用并行方法，为了降低通信开销，只能先计算正例支持度，这样剪枝策略3可以避免不必要的负例支持度计算，而完成对比度计算之后，会更新全局的结果集R，剪枝条件（CRmin）也会随之更新
+- 在生成新的候选对比序列模式时剪枝策略2生效，避免生成无意义的候选模式
+
+####复杂度分析及负载均衡
+######SP-kDSP-Miner伪代码
+![SP-kDSP-Miner伪代码](/Users/fang/Documents/github-file/Spark_Top-k_Note/SP-kDSP-Miner伪代码.jpg)
+
+######负载均衡
+基于Spark框架的分布式算法的运行时间取决于计算时间最长的计算节点，即符合木桶效应。因此，实现各计算节点的负载均衡有利于降低算法总执行时间。
+
+方法：为保证计算节点负载均衡，各计算节点载入的序列数据大小应该尽量相同。因此，在对D+,D-进行分片时，我们采用均分策略，即将数据集分片为与计算节点数量相同的等份载入节点
+
+下一步工作：考虑计算节点的负载动态均衡，即允许节点的负载在算法执行过程中动态调整
+
+##实验
